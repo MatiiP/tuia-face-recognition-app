@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Informe Final — Sistema de Reconocimiento Facial (TP1)</title>
+    <style>
+        :root { --accent: #3498db; --bg: #f8f9fa; --card: #fff; --text: #2c3e50; --muted: #7f8c8d; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; line-height: 1.7; color: var(--text); background: var(--bg); }
+        .wrap { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+        h1 { font-size: 2rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; margin-bottom: 1.5rem; }
+        h2 { font-size: 1.4rem; color: var(--accent); margin: 2rem 0 .75rem; }
+        h3 { font-size: 1.15rem; margin: 1.5rem 0 .5rem; }
+        p, li { font-size: 1.05rem; margin-bottom: .5rem; }
+        ul, ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.08); border-radius: 6px; overflow: hidden; }
+        th { background: var(--accent); color: #fff; text-align: left; padding: .65rem .9rem; font-weight: 600; }
+        td { padding: .6rem .9rem; border-bottom: 1px solid #eee; }
+        tr:last-child td { border-bottom: none; }
+        code, .code { background: #ecf0f1; padding: 2px 6px; border-radius: 4px; font-family: 'Cascadia Code', Consolas, monospace; font-size: .95em; color: #c0392b; }
+        .card { background: var(--card); padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.07); margin-bottom: 1.5rem; }
+        .highlight { background: linear-gradient(135deg, #3498db22, #2ecc7122); border-left: 4px solid var(--accent); padding: 1rem 1.25rem; border-radius: 0 6px 6px 0; margin: 1rem 0; }
+        .img-row { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0; }
+        .img-row img { max-width: 48%; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.12); }
+        footer { text-align: center; color: var(--muted); font-size: .85rem; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+
+    <h1>Informe Final: Sistema de Reconocimiento Facial (TP1)</h1>
+
+    <!-- ─── Sección 1 ─── -->
+    <div class="card">
+        <h2>1. Arquitectura General</h2>
+        <p>El sistema se despliega como <strong>4 servicios Docker</strong> independientes:</p>
+        <table>
+            <tr><th>Servicio</th><th>Tecnología</th><th>Puerto</th><th>Función</th></tr>
+            <tr><td>backend</td><td>FastAPI + PyTorch</td><td>8000</td><td>API REST: detección, registro y predicción</td></tr>
+            <tr><td>frontend</td><td>Gradio</td><td>8080</td><td>Interfaz gráfica de usuario</td></tr>
+            <tr><td>postgres</td><td>PostgreSQL + pgvector</td><td>5432</td><td>Base de datos vectorial</td></tr>
+            <tr><td>jupyter</td><td>JupyterLab</td><td>8888</td><td>Entorno de experimentación</td></tr>
+        </table>
+
+        <h3>Pipeline de Reconocimiento</h3>
+        <p>El pipeline dentro de <code>face_service.py</code> sigue 4 etapas claramente separadas:</p>
+        <ol>
+            <li><strong>Detección</strong> — RetinaFace (InsightFace <code>buffalo_s</code>): bounding boxes + 5 keypoints faciales.</li>
+            <li><strong>Alineación</strong> — Transformación afín (<code>norm_crop</code>): rota, escala y centra el rostro a 112×112 px.</li>
+            <li><strong>Embeddings</strong> — ResNet-18 fine-tuned: proyecta cada rostro en un <strong>vector de 512 dimensiones</strong>, normalizado L2.</li>
+            <li><strong>Comparación</strong> — <strong>Similitud Coseno</strong> contra la base de datos PostgreSQL (pgvector).</li>
+        </ol>
+    </div>
+
+    <!-- ─── Sección 2 ─── -->
+    <div class="card">
+        <h2>2. Dataset</h2>
+        <table>
+            <tr><th>Persona</th><th>Imágenes</th><th>Regla</th></tr>
+            <tr><td>Ambrogi</td><td>4</td><td>Todas las disponibles (prueba de desbalance)</td></tr>
+            <tr><td>Gianfranco</td><td>10</td><td>Cap estándar</td></tr>
+            <tr><td>Gianluca</td><td>10</td><td>Cap estándar</td></tr>
+            <tr><td>Lucas</td><td>10</td><td>Cap estándar</td></tr>
+            <tr><td>Matías</td><td>10</td><td>Cap estándar</td></tr>
+            <tr><td>Roberto</td><td>10</td><td>Cap estándar</td></tr>
+            <tr><td><strong>Valentino</strong></td><td><strong>0</strong></td><td><strong>Excluido — prueba fuera de distribución (unknown)</strong></td></tr>
+        </table>
+        <div class="highlight">
+            <strong>Valentino</strong> es hermano genético de Gianluca. Al excluirlo del entrenamiento evaluamos si el modelo capta rasgos familiares compartidos o lo clasifica como desconocido.
+        </div>
+    </div>
+
+    <!-- ─── Sección 3 ─── -->
+    <div class="card">
+        <h2>3. Entrenamiento (Fine-Tuning)</h2>
+        <table>
+            <tr><th>Parámetro</th><th>Valor</th></tr>
+            <tr><td>Backbone</td><td>ResNet-18 (timm, pretrained ImageNet)</td></tr>
+            <tr><td>Embedding size</td><td>512</td></tr>
+            <tr><td>Épocas</td><td>50</td></tr>
+            <tr><td>Batch size</td><td>8</td></tr>
+            <tr><td>Learning rate</td><td>1×10⁻⁴ (Adam)</td></tr>
+            <tr><td>Loss</td><td>CrossEntropyLoss</td></tr>
+            <tr><td>Data augmentation</td><td>HorizontalFlip + ColorJitter</td></tr>
+            <tr><td>Dispositivo</td><td>CPU (Docker)</td></tr>
+        </table>
+
+        <h3>Resultados de Convergencia</h3>
+        <table>
+            <tr><th>Época</th><th>Loss</th><th>Accuracy</th></tr>
+            <tr><td>10</td><td>1.4305</td><td>70.37%</td></tr>
+            <tr><td>20</td><td>0.7549</td><td>88.89%</td></tr>
+            <tr><td>30</td><td>0.2685</td><td>100.00%</td></tr>
+            <tr><td>40</td><td>0.1368</td><td>100.00%</td></tr>
+            <tr><td><strong>50</strong></td><td><strong>0.0438</strong></td><td><strong>100.00%</strong></td></tr>
+        </table>
+        <p>Las métricas completas están en <code>output/training_metrics.json</code>.</p>
+    </div>
+
+    <!-- ─── Sección 4 ─── -->
+    <div class="card">
+        <h2>4. Evaluación y Visualización</h2>
+        <p>Se generaron gráficos de reducción de dimensionalidad sobre los embeddings de <strong>todas</strong> las personas (incluyendo Valentino):</p>
+        <div class="img-row">
+            <img src="output/pca.png" alt="PCA de Embeddings Faciales">
+            <img src="output/tsne.png" alt="t-SNE de Embeddings Faciales">
+        </div>
+
+        <h3>Análisis de Valentino (vecino más cercano)</h3>
+        <table>
+            <tr><th>Imagen</th><th>Vecino más cercano</th><th>Similitud Coseno</th></tr>
+            <tr><td>valentino_01.png</td><td>Roberto</td><td>0.8633</td></tr>
+            <tr><td>valentino_02.png</td><td>Matías</td><td>0.8918</td></tr>
+        </table>
+        <p>El modelo no confunde a Valentino directamente con su hermano Gianluca, mostrando buena capacidad de discriminación. Los valores de similitud (0.86–0.89) están cercanos al umbral, coherente con tratarse de un sujeto desconocido.</p>
+        <p>Reporte completo: <code>output/evaluation_report.json</code></p>
+    </div>
+
+    <!-- ─── Sección 5 ─── -->
+    <div class="card">
+        <h2>5. Base de Datos (Seed)</h2>
+        <p>Se pre-cargaron <strong>2 imágenes por persona</strong> (excepto Valentino) usando <code>seed_db.py</code>, totalizando <strong>12 registros</strong> en la tabla <code>embeddings</code> de PostgreSQL.</p>
+    </div>
+
+    <!-- ─── Sección 6 ─── -->
+    <div class="card">
+        <h2>6. Archivos Generados</h2>
+        <table>
+            <tr><th>Archivo</th><th>Descripción</th></tr>
+            <tr><td><code>models/face_detection.pth</code></td><td>Modelo PyTorch entrenado (ResNet-18, 512-dim)</td></tr>
+            <tr><td><code>output/training_metrics.json</code></td><td>Métricas de entrenamiento (loss/acc por época)</td></tr>
+            <tr><td><code>output/evaluation_report.json</code></td><td>Similitud intra-clase + vecinos de Valentino</td></tr>
+            <tr><td><code>output/pca.png</code></td><td>Gráfico PCA de embeddings</td></tr>
+            <tr><td><code>output/tsne.png</code></td><td>Gráfico t-SNE de embeddings</td></tr>
+            <tr><td><code>train.py</code></td><td>Script de entrenamiento</td></tr>
+            <tr><td><code>evaluate.py</code></td><td>Script de evaluación (PCA/t-SNE/métricas)</td></tr>
+            <tr><td><code>seed_db.py</code></td><td>Script de carga inicial de la base de datos</td></tr>
+            <tr><td><code>Dataset/dataset.md</code></td><td>Documentación del dataset</td></tr>
+            <tr><td><code>informe.md</code> / <code>informe.html</code></td><td>Este informe en ambos formatos</td></tr>
+        </table>
+    </div>
+
+    <footer>
+        TP1 — Visión por Computadora — TUIA 2026
+    </footer>
+
+</div>
+</body>
+</html>
