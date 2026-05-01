@@ -159,23 +159,19 @@ No hardcodear parametros. Configurar mediante `.env`:
 
 ## Modelo y fine-tuning
 
-Completar en la entrega final:
+El proceso completo de entrenamiento, diseño arquitectónico y métricas se encuentra **completamente documentado en el notebook `train.ipynb`**. 
 
-- Arquitectura elegida (ResNet, EfficientNet, ViT, etc.)
-- Justificacion tecnica y trade-offs
-- Hiperparametros y proceso de fine-tuning
-- Analisis de errores (FP/FN)
-- Metricas: accuracy, precision, recall
+**Resumen:**
+- **Arquitectura**: ResNet-50 pre-entrenada con capa de embedding final de 512 dimensiones.
+- **Justificación**: Se eligió ResNet-50 en lugar de arquitecturas más livianas para otorgarle al modelo mayor capacidad de abstracción de características profundas, necesarias para distinguir rostros genéticamente similares.
+- **Hiperparámetros**: Entrenado durante 50 épocas con Adam (lr=1e-4) y Data Augmentation agresivo para evitar el sobreajuste.
 
 ## Dataset
 
-Documentar:
-
-- Fuente de imagenes (propias + publicas/provistas)
-- Cantidad por clase/persona
-- Balance de clases
-- Variaciones (iluminacion, pose, expresion)
-- Reglas de filtrado/calidad
+La recolección, limpieza y procesamiento de las imágenes están detalladas en `train.ipynb`.
+- **Fuentes**: Labeled Faces in the Wild (LFW) para rostros genéricos + Dataset propio.
+- **Estrategia**: Oversampling y Data Augmentation geométrico/color para contrarrestar la falta de imágenes locales.
+- **Validación ciego**: Se apartaron imágenes específicas (caso "Valentino") para probar generalización.
 
 ## Notas importantes
 

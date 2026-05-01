@@ -144,10 +144,10 @@ Dataset/
 ### 5.2 Ejecutar el Entrenamiento
 
 ```bash
-docker compose run --rm --entrypoint python jupyter train.py
+docker compose run --rm --entrypoint python jupyter nbconvert --to notebook --execute train.ipynb
 ```
 
-Esto ejecuta el script `train.py` dentro del contenedor Docker con todas las dependencias ya instaladas (PyTorch, InsightFace, timm, etc.).
+Esto ejecuta el notebook `train.ipynb` dentro del contenedor Docker con todas las dependencias ya instaladas (PyTorch, InsightFace, timm, etc.).
 
 **Salida esperada:**
 
@@ -169,7 +169,7 @@ Métricas guardadas en output/training_metrics.json
 ¡Entrenamiento completado!
 ```
 
-### 5.3 Parámetros configurables (en `train.py`)
+### 5.3 Parámetros configurables (en `train.ipynb`)
 
 | Parámetro    | Valor por defecto | Descripción                              |
 |-------------|-------------------|------------------------------------------|
@@ -250,7 +250,7 @@ SELECT count(*) FROM embeddings;
 | Apagar todo                         | `docker compose down`                                      |
 | Reiniciar backend                   | `docker compose restart backend`                           |
 | Ver logs del backend                | `docker compose logs -f backend`                           |
-| Entrenar modelo                     | `docker compose run --rm --entrypoint python jupyter train.py` |
+| Entrenar modelo                     | `docker compose run --rm --entrypoint python jupyter nbconvert --to notebook --execute train.ipynb` |
 | Evaluar modelo (PCA/t-SNE)          | `docker compose run --rm --entrypoint python jupyter evaluate.py` |
 | Poblar base de datos                | `docker compose run --rm --entrypoint python jupyter seed_db.py` |
 | Limpiar base de datos               | `docker compose exec postgres psql -U faces_user -d faces -c "DELETE FROM embeddings;"` |
@@ -273,7 +273,7 @@ tuia-face-recognition-app/
 │   ├── valentino/              # Excluido del entrenamiento
 │   └── dataset.md              # Documentación del dataset
 ├── models/
-│   └── face_detection.pth      # Modelo entrenado (ResNet-18, 512-dim)
+│   └── face_detection.pth      # Modelo entrenado (ResNet-50, 512-dim)
 ├── output/
 │   ├── training_metrics.json   # Métricas del entrenamiento
 │   ├── evaluation_report.json  # Reporte de evaluación
@@ -287,7 +287,7 @@ tuia-face-recognition-app/
 │   │   └── schemas.py          # Modelos Pydantic
 │   └── frontend/
 │       └── gradio_ui.py        # Interfaz Gradio
-├── train.py                    # Script de entrenamiento
+├── train.ipynb                 # Notebook de entrenamiento (Pipeline completo)
 ├── evaluate.py                 # Script de evaluación (PCA/t-SNE)
 ├── seed_db.py                  # Script de carga de la base de datos
 ├── docker-compose.yml          # Definición de servicios Docker
