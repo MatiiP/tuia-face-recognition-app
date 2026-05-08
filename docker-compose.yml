@@ -16,7 +16,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    entrypoint: ["uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
 
   postgres:
     image: pgvector/pgvector:pg17
@@ -49,6 +49,7 @@ services:
       backend:
         condition: service_started
 
+  # ── Jupyter (CPU) ────────────────────────────────────────────
   jupyter:
     build:
       context: .
@@ -58,6 +59,27 @@ services:
       - "8888:8888"
     volumes:
       - ./:/app
+    entrypoint: ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+
+  # ── Jupyter (GPU — requiere nvidia-container-toolkit) ───────
+  # Usar con:  docker compose --profile gpu up jupyter-gpu
+  jupyter-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: jupyter-gpu
+    profiles: ["gpu"]
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./:/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     entrypoint: ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
 
 volumes:

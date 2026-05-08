@@ -4,9 +4,9 @@ Genera gráficos PCA y t-SNE de los embeddings de TODAS las clases del dataset,
 incluyendo a Valentino (que no fue parte del entrenamiento).
 
 Salida:
-  - output/pca.png
-  - output/tsne.png
-  - output/evaluation_report.json  (distancias inter/intra clase, vecino más cercano de Valentino)
+  - Graphics/pca.png
+  - Graphics/tsne.png
+  - Graphics/evaluation_report.json  (distancias inter/intra clase, vecino más cercano de Valentino)
 """
 
 import os
@@ -30,7 +30,7 @@ DATASET_DIR = "Dataset"
 MODEL_PATH = "models/face_detection.pth"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 FACE_SIZE = 112
-OUTPUT_DIR = "output"
+OUTPUT_DIR = "Graphics"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 

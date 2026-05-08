@@ -11,6 +11,7 @@ Antes de empezar, asegurate de tener instalado:
 - **Docker Desktop** — [Descargar](https://www.docker.com/products/docker-desktop/)
 - **Git** — Para clonar el repositorio
 - Al menos **8 GB de RAM** disponibles para Docker
+- **NVIDIA Container Toolkit** — Solo si vas a entrenar con GPU ([Guía de instalación](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html))
 
 > **Nota:** No necesitás tener Python instalado localmente. Todo corre dentro de los contenedores Docker.
 
@@ -19,7 +20,7 @@ Antes de empezar, asegurate de tener instalado:
 ## 1. Clonar el Repositorio
 
 ```bash
-git clone https://github.com/tu-usuario/tuia-face-recognition-app.git
+git clone https://github.com/MatiiP/tuia-face-recognition-app.git
 cd tuia-face-recognition-app
 ```
 
@@ -127,8 +128,6 @@ Dataset/
 │   ├── ambrogi_02.png
 │   └── ...
 ├── gianfranco/
-│   ├── gianfranco_01.png
-│   └── ...
 ├── gianluca/
 ├── lucas/
 ├── matias/
@@ -136,50 +135,49 @@ Dataset/
 └── valentino/          ← Excluido del entrenamiento automáticamente
 ```
 
-**Reglas del dataset:**
-- Cada persona debe tener idealmente **10 imágenes** (se toman hasta 10).
-- `ambrogi` usa todas las que tenga (prueba de desbalance).
-- `valentino` es ignorado completamente (prueba de unknown).
-
 ### 5.2 Ejecutar el Entrenamiento
 
+#### Con GPU (Recomendado) ⚡
+
 ```bash
-docker compose run --rm --entrypoint python jupyter nbconvert --to notebook --execute train.ipynb
+docker compose --profile gpu up jupyter-gpu --build
 ```
 
-Esto ejecuta el notebook `train.ipynb` dentro del contenedor Docker con todas las dependencias ya instaladas (PyTorch, InsightFace, timm, etc.).
+Luego abrí **http://localhost:8888/lab** y ejecutá todas las celdas de `train.ipynb`.
 
-**Salida esperada:**
+> **Nota:** La primera vez el build tarda ~15-20 min por la descarga de CUDA + PyTorch. Las siguientes veces usa cache y es casi instantáneo si no cambiaste `requirements.txt`.
 
-```
-Iniciando entrenamiento en cpu...
-Clases válidas encontradas: 6
-  ambrogi: 4 imágenes (todas, prueba de desbalance)
-  gianfranco: 10 imágenes (cap 10)
-  ...
+#### Con CPU
 
-Iniciando loop de entrenamiento (50 épocas)...
-Epoch 1/50 — Loss: 1.7985 — Acc: 16.67%
-Epoch 2/50 — Loss: 1.7600 — Acc: 31.48%
-...
-Epoch 50/50 — Loss: 0.0438 — Acc: 100.00%
-
-Modelo guardado en models/face_detection.pth
-Métricas guardadas en output/training_metrics.json
-¡Entrenamiento completado!
+```bash
+docker compose up jupyter --build
 ```
 
-### 5.3 Parámetros configurables (en `train.ipynb`)
+Luego abrí **http://localhost:8888** y ejecutá `train.ipynb`.
+
+### 5.3 Qué hace el notebook
+
+El notebook ejecuta las siguientes etapas:
+
+1. **Pipeline de 4 etapas:** Define las funciones de detección, alineación, extracción de embeddings y comparación.
+2. **Carga de datasets:** Descarga LFW y carga el dataset local.
+3. **Balanceo:** Aplica **undersampling** a LFW (cap 40 img/clase) y **oversampling** a clases locales (target 40 img/clase).
+4. **Entrenamiento:** Fine-tuning de ResNet-50 durante 50 épocas con data augmentation agresiva.
+5. **Métricas:** Genera curvas de loss/accuracy, matriz de confusión, AUC-ROC.
+6. **Inferencia externa:** Evalúa el modelo sobre imágenes de la carpeta `Inferencia/`.
+
+### 5.4 Parámetros configurables (en `train.ipynb`)
 
 | Parámetro    | Valor por defecto | Descripción                              |
 |-------------|-------------------|------------------------------------------|
 | `EPOCHS`    | 50                | Número de épocas de entrenamiento        |
-| `BATCH_SIZE`| 8                 | Tamaño de batch                          |
-| `LR`        | 1e-4              | Learning rate (Adam optimizer)           |
+| `LEARNING_RATE` | 1e-4          | Learning rate (Adam optimizer)           |
+| `TARGET_COUNT` | 40             | Target de imágenes por clase (balanceo)  |
 | `FACE_SIZE` | 112               | Tamaño de rostro alineado (píxeles)      |
 | `EMBEDDING_SIZE` | 512          | Dimensión del vector de embedding        |
+| `SIMILARITY_THRESHOLD` | 0.75   | Umbral de similitud para inferencia      |
 
-### 5.4 Después de entrenar
+### 5.5 Después de entrenar
 
 **Reiniciar el backend** para que cargue el modelo nuevo:
 
@@ -201,7 +199,28 @@ docker compose run --rm --entrypoint python jupyter seed_db.py
 
 ---
 
-## 6. Generar Gráficos de Evaluación (PCA / t-SNE)
+## 6. Evaluación de Inferencia Externa
+
+Después de entrenar, el notebook evalúa automáticamente el modelo sobre imágenes externas en `Inferencia/`:
+
+```
+Inferencia/
+├── ambrogi/          # Persona conocida → debe reconocerla
+├── gianfranco/       # Persona conocida → debe reconocerla
+├── gianluca/         # Persona conocida → debe reconocerla
+├── lucas/            # Persona conocida → debe reconocerla
+├── matias/           # Persona conocida → debe reconocerla
+├── roberto/          # Persona conocida → debe reconocerla
+├── valentino/        # Desconocido → debe rechazarla
+├── otros/            # Desconocidos → debe rechazarlas
+└── varias_personas/  # Múltiples caras → debe detectar e identificar todas
+```
+
+Los resultados se guardan en `train_metrics/inference_report.json` y los gráficos en `Graphics/`.
+
+---
+
+## 7. Generar Gráficos de Evaluación (PCA / t-SNE)
 
 Después de entrenar, podés generar visualizaciones de los embeddings:
 
@@ -210,13 +229,13 @@ docker compose run --rm --entrypoint python jupyter evaluate.py
 ```
 
 Esto genera:
-- `output/pca.png` — Gráfico PCA de todos los embeddings (incluyendo Valentino).
-- `output/tsne.png` — Gráfico t-SNE con Valentino marcado con ★.
-- `output/evaluation_report.json` — Similitudes intra-clase y vecino más cercano de Valentino.
+- `Graphics/pca.png` — Gráfico PCA de todos los embeddings (incluyendo Valentino).
+- `Graphics/tsne.png` — Gráfico t-SNE con Valentino marcado con ★.
+- `Graphics/evaluation_report.json` — Similitudes intra-clase y vecino más cercano de Valentino.
 
 ---
 
-## 7. Consultar la Base de Datos
+## 8. Consultar la Base de Datos
 
 Abrir una consola SQL interactiva:
 
@@ -242,15 +261,16 @@ SELECT count(*) FROM embeddings;
 
 ---
 
-## 8. Comandos Útiles
+## 9. Comandos Útiles
 
 | Acción                              | Comando                                                    |
-|-------------------------------------|------------------------------------------------------------|
+|-------------------------------------|-----------------------------------------------------------|
 | Levantar todo                       | `docker compose up --build -d`                             |
+| Levantar Jupyter con GPU            | `docker compose --profile gpu up jupyter-gpu --build`      |
+| Levantar Jupyter con CPU            | `docker compose up jupyter --build`                        |
 | Apagar todo                         | `docker compose down`                                      |
 | Reiniciar backend                   | `docker compose restart backend`                           |
 | Ver logs del backend                | `docker compose logs -f backend`                           |
-| Entrenar modelo                     | `docker compose run --rm --entrypoint python jupyter nbconvert --to notebook --execute train.ipynb` |
 | Evaluar modelo (PCA/t-SNE)          | `docker compose run --rm --entrypoint python jupyter evaluate.py` |
 | Poblar base de datos                | `docker compose run --rm --entrypoint python jupyter seed_db.py` |
 | Limpiar base de datos               | `docker compose exec postgres psql -U faces_user -d faces -c "DELETE FROM embeddings;"` |
@@ -259,7 +279,7 @@ SELECT count(*) FROM embeddings;
 
 ---
 
-## 9. Estructura del Proyecto
+## 10. Estructura del Proyecto
 
 ```
 tuia-face-recognition-app/
@@ -272,13 +292,20 @@ tuia-face-recognition-app/
 │   ├── roberto/
 │   ├── valentino/              # Excluido del entrenamiento
 │   └── dataset.md              # Documentación del dataset
+├── Inferencia/                 # Imágenes externas para test de inferencia
+│   ├── ambrogi/                # Personas conocidas
+│   ├── gianfranco/
+│   ├── gianluca/
+│   ├── lucas/
+│   ├── matias/
+│   ├── roberto/
+│   ├── valentino/              # Persona desconocida
+│   ├── otros/                  # Personas completamente desconocidas
+│   └── varias_personas/        # Imágenes con múltiples rostros
 ├── models/
 │   └── face_detection.pth      # Modelo entrenado (ResNet-50, 512-dim)
-├── output/
-│   ├── training_metrics.json   # Métricas del entrenamiento
-│   ├── evaluation_report.json  # Reporte de evaluación
-│   ├── pca.png                 # Gráfico PCA
-│   └── tsne.png                # Gráfico t-SNE
+├── Graphics/                   # Todos los gráficos generados
+├── train_metrics/              # Métricas de entrenamiento e inferencia
 ├── src/
 │   ├── app/main.py             # Aplicación FastAPI
 │   ├── lib/
@@ -291,7 +318,8 @@ tuia-face-recognition-app/
 ├── evaluate.py                 # Script de evaluación (PCA/t-SNE)
 ├── seed_db.py                  # Script de carga de la base de datos
 ├── docker-compose.yml          # Definición de servicios Docker
-├── Dockerfile                  # Imagen del backend
+├── Dockerfile                  # Imagen del backend (CPU)
+├── Dockerfile.gpu              # Imagen del backend (GPU — NVIDIA CUDA)
 ├── Dockerfile.frontend         # Imagen del frontend
 ├── requirements.txt            # Dependencias Python
 ├── informe.md / informe.html   # Informe final del TP

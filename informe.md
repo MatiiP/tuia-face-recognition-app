@@ -1,5 +1,8 @@
 # Informe Final: Sistema de Reconocimiento Facial (TP1)
 
+**Materia:** Computación Visual — TUIA  
+**Alumnos:** Gianfranco Frattini, Matias Prado
+
 ## 1. Arquitectura General y Flujo de Trabajo
 
 El sistema está construido como una aplicación de microservicios desplegada en **Docker**, compuesta por:
@@ -10,6 +13,7 @@ El sistema está construido como una aplicación de microservicios desplegada en
 | `frontend`  | Gradio               | 8080   | Interfaz gráfica de usuario                  |
 | `postgres`  | PostgreSQL + pgvector| 5432   | Base de datos vectorial de embeddings        |
 | `jupyter`   | JupyterLab           | 8888   | Entorno de experimentación                   |
+| `jupyter-gpu` | JupyterLab + CUDA | 8888   | Entrenamiento acelerado con GPU NVIDIA       |
 
 ### Pipeline de Reconocimiento (face_service.py)
 
@@ -18,23 +22,42 @@ El pipeline sigue 4 etapas claramente separadas dentro del código:
 1. **Detección** (`detect_faces`): Utiliza **RetinaFace** (vía InsightFace `buffalo_s`) para encontrar bounding boxes y 5 keypoints faciales (ojos, nariz, comisuras de la boca).
 2. **Alineación** (`align_face`): Aplica una **transformación afín** (`norm_crop`) usando los keypoints para rotar, escalar y centrar cada rostro a un tamaño estándar de 112×112 píxeles.
 3. **Embeddings** (`extract_embedding_from_face`): El rostro alineado pasa por un modelo convolucional (ResNet-50 fine-tuned) que produce un **vector de 512 dimensiones**, normalizado con L2.
-4. **Comparación** (`identify`): Los embeddings de la consulta se comparan contra la base de datos PostgreSQL usando **Similitud Coseno**. Si el score supera el umbral configurado (actualmente ajustado a 0.90 por la alta agrupación geométrica), se asigna la identidad; caso contrario, se marca como `unknown`.
+4. **Comparación** (`identify`): Los embeddings de la consulta se comparan contra la base de datos PostgreSQL usando **Similitud Coseno**. Si el score supera el umbral configurado, se asigna la identidad; caso contrario, se marca como `unknown`.
 
 ## 2. Dataset
 
-Se construyó un dataset propio con reglas específicas para evaluar robustez:
+### Fuentes de datos
 
-| Persona     | Imágenes | Regla                                          |
-|-------------|----------|-------------------------------------------------|
-| Ambrogi     | 4        | Todas las disponibles (prueba de desbalance)    |
-| Gianfranco  | 10       | Cap estándar                                    |
-| Gianluca    | 10       | Cap estándar                                    |
-| Lucas       | 10       | Cap estándar                                    |
-| Matías      | 10       | Cap estándar                                    |
-| Roberto     | 10       | Cap estándar                                    |
-| **Valentino** | **0 (excluido)** | **Prueba fuera de distribución (unknown)** |
+Se construyó un dataset combinando dos fuentes:
+
+| Fuente | Clases | Imágenes/persona | Descripción |
+|--------|--------|-------------------|-------------|
+| **LFW** (Labeled Faces in the Wild) | 7 | 70–530 (original) | Personalidades públicas con ≥70 imágenes |
+| **Custom** (propio) | 6 | 4–15 | Imágenes de los integrantes del equipo |
+
+### Personas del dataset
+
+| Persona     | Fuente | Imágenes originales | Rol                                     |
+|-------------|--------|--------------------|-----------------------------------------|
+| Ambrogi     | Custom | 4                  | Prueba de clase minoritaria             |
+| Gianfranco  | Custom | 15                 | Integrante del equipo                   |
+| Gianluca    | Custom | 14                 | Integrante (hermano de Valentino)       |
+| Lucas       | Custom | 11                 | Integrante del equipo                   |
+| Matías      | Custom | 12                 | Integrante del equipo                   |
+| Roberto     | Custom | 10                 | Integrante del equipo                   |
+| **Valentino** | Custom | **Excluido** | **Prueba fuera de distribución (unknown)** |
+| 7 clases LFW | LFW  | 70–530 c/u         | Presidentes y personalidades públicas   |
 
 **Valentino** es hermano genético de Gianluca. Al excluirlo del entrenamiento, podemos evaluar empíricamente si el modelo capta rasgos familiares compartidos o lo clasifica como desconocido.
+
+### Estrategia de Balanceo: Undersampling + Oversampling
+
+El dataset original presentaba un fuerte desbalance: las clases LFW tenían hasta 530 imágenes, mientras que las locales apenas 4–15. Para resolverlo se implementó una **estrategia de balanceo doble** con un target de **40 imágenes por clase**:
+
+- **Undersampling de LFW:** Cada clase de LFW que supera las 40 imágenes en el split de train se submuestrea aleatoriamente al target. Esto evita que el modelo se sesgue hacia las caras de presidentes.
+- **Oversampling de clases locales:** Las clases con menos de 40 imágenes se sobremuestrean duplicando imágenes existentes. La **Data Augmentation agresiva** (rotación, flip, color jitter, blur, grayscale, affine) asegura que las copias no sean idénticas.
+
+Resultado: distribución uniforme de ~40 imágenes por clase en el conjunto de entrenamiento.
 
 ## 3. Entrenamiento (Fine-Tuning)
 
@@ -42,49 +65,66 @@ Se construyó un dataset propio con reglas específicas para evaluar robustez:
 
 | Parámetro       | Valor            |
 |-----------------|------------------|
-| Backbone        | ResNet-50 (timm) |
-| Pre-entrenamiento | ImageNet        |
+| Backbone        | ResNet-50 (timm, pre-trained ImageNet) |
 | Embedding size  | 512              |
 | Épocas          | 50               |
-| Batch size      | 8                |
-| Learning rate   | 1e-4 (Adam)      |
+| Batch size      | 32               |
+| Learning rate   | 1e-4 (Adam, weight_decay=1e-4) |
 | Loss            | CrossEntropyLoss |
-| Data augmentation | HorizontalFlip + ColorJitter |
-| Dispositivo     | CPU (Docker)     |
+| Data augmentation | HorizontalFlip, Rotation(15°), Affine, ColorJitter, GaussianBlur, RandomGrayscale |
+| Dispositivo     | GPU (NVIDIA CUDA) / CPU |
 
-### Resultados
+### Docker GPU
 
-El modelo alcanzó **~99.53% de accuracy en Train** y **~98.16% en Validación** con una loss muy baja en la época 50.
+El entrenamiento se realizó utilizando Docker con soporte para GPU NVIDIA, lo que permite una aceleración significativa del proceso:
 
-La convergencia demostró el poder de ResNet-50:
-- Época 10: 75.35% Train | 82.35% Val
-- Época 30: 97.32% Train | 97.43% Val
-- Época 50: 99.53% Train | 98.16% Val
+```bash
+docker compose --profile gpu up jupyter-gpu --build
+```
 
-Las métricas completas (por época) están disponibles en `output/training_metrics.json`.
+El `Dockerfile.gpu` utiliza la imagen base `nvidia/cuda:12.4.1-runtime-ubuntu22.04` con Python 3.12 y todas las dependencias del proyecto. El notebook detecta automáticamente la disponibilidad de CUDA.
 
 ### Exportación del Modelo
 
-El modelo final se exporta como `nn.Sequential(backbone, embedding_head)`, lo que permite cargarlo directamente en la API sin dependencias del script de entrenamiento.
+El modelo final se exporta como `nn.Sequential(backbone, embedding_head)`, lo que permite cargarlo directamente en la API sin dependencias del script de entrenamiento. Se guarda automáticamente el mejor modelo según val accuracy en `models/face_detection.pth`.
 
-## 4. Evaluación y Visualización
+## 4. Evaluación
 
-### PCA y t-SNE
+### Métricas de Entrenamiento
 
-Se generaron gráficos de reducción de dimensionalidad aplicados a los embeddings de **todas** las personas del dataset, incluyendo a Valentino:
+El notebook genera automáticamente:
+- **Curvas de Loss y Accuracy** (train vs validation) por época
+- **Matriz de Confusión** sobre el conjunto de validación
+- **Curva AUC-ROC multiclase** (One-vs-Rest) con micro-average
 
-- `output/pca.png` — Proyección PCA a 2 componentes principales
-- `output/tsne.png` — Proyección t-SNE con Valentino marcado con ★
+### Prueba de Valentino (Unknown)
 
-### Análisis de Valentino (vecino más cercano)
+Como test de generalización, se compara el embedding de Valentino (excluido del entrenamiento) contra Gianluca (su hermano). Esto evalúa si el modelo distingue personas genéticamente similares o produce falsos positivos.
 
-| Imagen de Valentino | Vecino más cercano | Similitud Coseno |
-|--------------------|--------------------|------------------|
-| valentino_01.png   | Gianluca           | ~0.9508          |
+### Evaluación de Inferencia Externa
 
-**Análisis Crítico:** Al utilizar ResNet-50, el modelo logró extraer características faciales muy profundas, agrupando los rostros con gran precisión. Sin embargo, al probar con la imagen excluida de Valentino (hermano de Gianluca), el modelo arrojó una similitud extrema (0.9508). Esto indica un "sobreajuste genético" o falso positivo debido al alto parecido familiar. Para mitigar esto en producción, el umbral (`SIMILARITY_THRESHOLD`) se elevó a `0.90` / `0.96` o se requerirían algoritmos de margen angular más estrictos (ArcFace).
+Se implementó una sección completa de evaluación sobre imágenes **externas al dataset** de entrenamiento, almacenadas en la carpeta `Inferencia/`:
 
-El reporte completo de evaluación está en `output/evaluation_report.json`.
+| Subcarpeta | Tipo | Evaluación |
+|-----------|------|------------|
+| `ambrogi/`, `gianfranco/`, `gianluca/`, `lucas/`, `matias/`, `roberto/` | Personas conocidas | Accuracy de reconocimiento |
+| `valentino/`, `otros/` | Personas desconocidas | Tasa de rechazo correcto |
+| `varias_personas/` | Imágenes grupales | Detección e identificación de múltiples caras |
+
+**Umbral de similitud:** 0.75. Si la similitud máxima contra el banco de referencia no supera este umbral, la persona se clasifica como "desconocido".
+
+**Métricas generadas:**
+- Accuracy por persona conocida
+- Tasa de rechazo para desconocidos (falsos positivos vs rechazos correctos)
+- Distribución de similitudes (histograma conocidos vs desconocidos)
+- Reporte completo en `train_metrics/inference_report.json`
+
+### Evaluación Visual (PCA / t-SNE)
+
+El script `evaluate.py` genera visualizaciones de reducción de dimensionalidad:
+- **PCA** — Proyección a 2 componentes principales
+- **t-SNE** — Proyección no lineal con Valentino marcado con ★
+- Reporte JSON con similitud intra-clase y vecino más cercano de Valentino
 
 ## 5. Base de Datos (Seed)
 
@@ -92,15 +132,23 @@ Se pre-cargaron **2 imágenes por persona** (excepto Valentino) en PostgreSQL me
 
 ## 6. Archivos Generados
 
-| Archivo                          | Descripción                                       |
-|----------------------------------|---------------------------------------------------|
-| `models/face_detection.pth`      | Modelo PyTorch entrenado (ResNet-50, 512-dim)     |
-| `output/training_metrics.json`   | Métricas de entrenamiento (loss/acc por época)    |
-| `output/evaluation_report.json`  | Similitud intra-clase + vecinos de Valentino      |
-| `output/pca.png`                 | Gráfico PCA de embeddings                         |
-| `output/tsne.png`                | Gráfico t-SNE de embeddings                       |
-| `train.ipynb`                    | Notebook de entrenamiento (Pipeline completo)     |
-| `evaluate.py`                    | Script de evaluación (PCA/t-SNE/métricas)         |
-| `seed_db.py`                     | Script de carga inicial de la base de datos       |
-| `Dataset/dataset.md`             | Documentación del dataset                         |
-| `informe.md` / `informe.html`   | Este informe en ambos formatos                    |
+| Archivo                                | Descripción                                       |
+|----------------------------------------|---------------------------------------------------|
+| `models/face_detection.pth`            | Modelo PyTorch entrenado (ResNet-50, 512-dim)     |
+| `Graphics/balanceo_antes_despues.png`  | Comparación antes/después del balanceo            |
+| `Graphics/distribucion_clases_train.png` | Distribución final de clases (train)            |
+| `Graphics/loss_vs_epochs.png`          | Curva de Loss (train + validation)                |
+| `Graphics/accuracy_vs_epochs.png`      | Curva de Accuracy (train + validation)            |
+| `Graphics/confusion_matrix.png`        | Matriz de confusión sobre validación              |
+| `Graphics/auc_roc.png`                 | Curva AUC-ROC multiclase                          |
+| `Graphics/inferencia_similitudes.png`  | Distribución de similitudes (inferencia)          |
+| `Graphics/inferencia_accuracy.png`     | Accuracy por persona (inferencia)                 |
+| `Graphics/pca.png`                     | Gráfico PCA de embeddings                         |
+| `Graphics/tsne.png`                    | Gráfico t-SNE de embeddings                       |
+| `train_metrics/train_metrics.log`      | Registro legible del entrenamiento                |
+| `train_metrics/train_metrics.json`     | Métricas estructuradas en JSON                    |
+| `train_metrics/inference_report.json`  | Reporte de evaluación de inferencia               |
+| `Graphics/evaluation_report.json`      | Similitud intra-clase + vecinos de Valentino      |
+| `train.ipynb`                          | Notebook de entrenamiento (Pipeline completo)     |
+| `evaluate.py`                          | Script de evaluación (PCA/t-SNE/métricas)         |
+| `seed_db.py`                           | Script de carga inicial de la base de datos       |
